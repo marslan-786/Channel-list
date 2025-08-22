@@ -27,7 +27,7 @@ OWNER_USERNAME = "whatsapp_offcial"  # Replace with your actual Telegram Usernam
 
 API_ID = 94575
 API_HASH = 'a3406de8d171bb422bb6ddf3bbd800e2'
-BOT_TOKEN = '7984874762:AAGc99zaI2M6CC0hFWIftxQ6B6ZknsjfKKw'
+BOT_TOKEN = '8324191756:AAGc99zaI2M6CC0hFWIftxQ6B6ZknsjfKKw'
 
 SESSION_FOLDER = 'sessions'
 CHANNEL_DATA_FILE = 'channel_data.json'
@@ -309,7 +309,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 'total_posts_reported': 0,
                 'total_reports_sent': 0,
                 'last_updated': datetime.now().isoformat(),
-                'added_by_user_id': user_id  # <--- HERE'S THE CHANGE
+                'added_by_user_id': user_id
             }
             save_channel_data(channel_data)
             
@@ -465,10 +465,10 @@ async def handle_new_post(event, bot, channel_link):
     report_type = data['report_type']
     report_message = data['report_message']
     report_count = data['report_count']
-    added_by_user_id = data['added_by_user_id'] # Get the user ID who added the channel
+    added_by_user_id = data['added_by_user_id']
 
     await bot.send_message(
-        chat_id=added_by_user_id, # Use the stored user ID
+        chat_id=added_by_user_id,
         text=f"**ایک نئی پوسٹ آ گئی ہے!** 📢\n"
              f"**چینل:** {channel_link}\n"
              f"**رپورٹ کی قسم:** {report_type}\n"
@@ -483,7 +483,7 @@ async def handle_new_post(event, bot, channel_link):
     save_channel_data(channel_data)
     
     await bot.send_message(
-        chat_id=added_by_user_id, # Use the stored user ID
+        chat_id=added_by_user_id,
         text=f"✅ **رپورٹنگ مکمل!**\n"
              f"**چینل:** {channel_link}\n"
              f"**پوسٹ ID:** `{event.id}`\n"
