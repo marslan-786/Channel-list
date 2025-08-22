@@ -27,7 +27,7 @@ OWNER_USERNAME = "whatsapp_offcial"  # Replace with your actual Telegram Usernam
 
 API_ID = 94575
 API_HASH = 'a3406de8d171bb422bb6ddf3bbd800e2'
-BOT_TOKEN = '8324191756:AAGc99zaI2M6CC0hFWIftxQ6B6ZknsjfKKw'
+BOT_TOKEN = '7984874762:AAGc99zaI2M6CC0hFWIftxQ6B6ZknsjfKKw'
 
 SESSION_FOLDER = 'sessions'
 CHANNEL_DATA_FILE = 'channel_data.json'
