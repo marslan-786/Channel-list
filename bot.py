@@ -3,17 +3,19 @@ import asyncio
 import re
 import json
 import logging
+import zipfile
+import io
 from datetime import datetime
 from telethon import TelegramClient, events
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telethon.tl.functions.messages import ReportRequest, ReportSpamRequest
+from telethon.tl.functions.messages import ReportRequest
 from telethon.tl.types import (
     InputReportReasonSpam, InputReportReasonViolence, InputReportReasonChildAbuse,
     InputReportReasonIllegalDrugs, InputReportReasonPornography, InputReportReasonPersonalDetails,
     InputReportReasonCopyright, InputReportReasonFake, InputReportReasonOther
 )
-from telethon.errors import FloodWaitError, ChannelPrivateError
+from telethon.errors import FloodWaitError
 import traceback
 
 # Set up logging
@@ -25,7 +27,7 @@ OWNER_USERNAME = "whatsapp_offcial"  # Replace with your actual Telegram Usernam
 
 API_ID = 94575
 API_HASH = 'a3406de8d171bb422bb6ddf3bbd800e2'
-BOT_TOKEN = '7984874762:AAGc99zaI2M6CC0hFWIftxQ6B6ZknsjfKKw'
+BOT_TOKEN = '8324191756:AAF28XJJ9wSO2jZ5iFIqlrdEbjqHFX190Pk'
 
 SESSION_FOLDER = 'sessions'
 CHANNEL_DATA_FILE = 'channel_data.json'
@@ -308,10 +310,40 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("Please provide a comment and a number separated by a space (e.g., 'Violent content 5').")
             context.user_data['state'] = 'awaiting_report_comment_and_count'
 
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if not is_owner(user_id):
+        await update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    await update.message.reply_text("Creating backup, please wait...")
+    
+    try:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add sessions folder
+            for root, dirs, files in os.walk(SESSION_FOLDER):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, os.path.dirname(SESSION_FOLDER))
+                    zip_file.write(file_path, arcname)
+
+            # Add channel_data.json file
+            if os.path.exists(CHANNEL_DATA_FILE):
+                zip_file.write(CHANNEL_DATA_FILE, os.path.basename(CHANNEL_DATA_FILE))
+
+        buffer.seek(0)
+        await update.message.reply_document(
+            document=buffer,
+            filename=f"bot_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+            caption="✅ Backup created successfully! Includes session files and channel data."
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to create backup. Error: {e}")
+
 # --- CORE FUNCTIONALITY ---
 async def manage_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = update.effective_user.id
     accounts = get_logged_in_accounts()
 
     if not accounts:
@@ -362,7 +394,7 @@ async def manage_channel_list(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     keyboard = []
-    for link, data in channel_data.items():
+    for link in channel_data.keys():
         channel_name = link.split('/')[-1] if 't.me' in link else link
         keyboard.append([
             InlineKeyboardButton(f"{channel_name}", callback_data=f'view_channel_{link}')
@@ -413,58 +445,6 @@ async def delete_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
     await manage_channel_list(update, context)
 
 # --- AUTOMATIC REPORTING LOGIC ---
-async def start_all_reporting_tasks(bot):
-    global telethon_clients, reporting_tasks
-    
-    for client in list(telethon_clients.values()):
-        if client.is_connected():
-            await client.disconnect()
-    
-    telethon_clients.clear()
-    reporting_tasks.clear()
-
-    accounts = get_logged_in_accounts()
-    channel_data = load_channel_data()
-
-    if not accounts or not channel_data:
-        logging.info("No accounts or channels found. Automatic reporting not started.")
-        return
-
-    checking_client = None
-    other_clients = []
-
-    for phone_number, user_id in accounts:
-        session_path = os.path.join(SESSION_FOLDER, str(user_id), phone_number)
-        client = TelegramClient(session_path, API_ID, API_HASH)
-        telethon_clients[phone_number] = client
-        if phone_number == CHECKING_PHONE_NUMBER:
-            checking_client = client
-        else:
-            other_clients.append(client)
-    
-    if not checking_client:
-        await bot.send_message(OWNER_ID, f"❌ Warning: The checking account {CHECKING_PHONE_NUMBER} is not logged in. Automatic reporting will not start.")
-        logging.error(f"Checking account {CHECKING_PHONE_NUMBER} not found. Exiting.")
-        return
-
-    await checking_client.start()
-    
-    for channel_link, data in channel_data.items():
-        try:
-            entity = await checking_client.get_entity(channel_link)
-            
-            @checking_client.on(events.NewMessage(chats=entity))
-            async def handler(event):
-                if event.post and not event.is_private and event.chat_id == entity.id:
-                    await handle_new_post(event, bot, channel_link)
-            
-            reporting_tasks[channel_link] = "Running"
-        except Exception as e:
-            logging.error(f"Failed to start reporting for channel {channel_link}: {e}")
-            
-    await asyncio.gather(*[client.start() for client in other_clients], return_exceptions=True)
-    logging.info(f"Started monitoring {len(channel_data)} channels with the dedicated account.")
-
 async def handle_new_post(event, bot, channel_link):
     channel_data = load_channel_data()
     if channel_link not in channel_data:
@@ -483,7 +463,6 @@ async def handle_new_post(event, bot, channel_link):
 
     await report_message_from_all_accounts(bot, channel_link, event.id, report_type, report_message, report_count)
     
-    # Update stats
     data['total_posts_reported'] += 1
     data['total_reports_sent'] += report_count
     save_channel_data(channel_data)
@@ -526,7 +505,7 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
                 reason=report_reason_obj, 
                 message=report_message
             ))
-            await asyncio.sleep(2) # Small delay to avoid flooding
+            await asyncio.sleep(2)
         
         logging.info(f"✅ Reports sent successfully from {phone_number} for post {message_id} in {channel_link}.")
     except FloodWaitError as e:
@@ -538,27 +517,66 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
         
 async def initialize_all_clients(app):
     bot = app.bot
-    global telethon_clients
+    global telethon_clients, reporting_tasks
     
+    # Disconnect existing clients and clear tasks
     for client in list(telethon_clients.values()):
         if client.is_connected():
             await client.disconnect()
     
     telethon_clients.clear()
-    
+    reporting_tasks.clear()
+
     accounts = get_logged_in_accounts()
+    channel_data = load_channel_data()
+
+    if not accounts or not channel_data:
+        logging.info("No accounts or channels found. Automatic reporting not started.")
+        return
+
+    checking_client = None
+    other_clients = []
+
     for phone_number, user_id in accounts:
         session_path = os.path.join(SESSION_FOLDER, str(user_id), phone_number)
         client = TelegramClient(session_path, API_ID, API_HASH)
         telethon_clients[phone_number] = client
+        if phone_number == CHECKING_PHONE_NUMBER:
+            checking_client = client
+        else:
+            other_clients.append(client)
     
-    await start_all_reporting_tasks(bot)
+    if not checking_client:
+        await bot.send_message(OWNER_ID, f"❌ Warning: The checking account {CHECKING_PHONE_NUMBER} is not logged in. Automatic reporting will not start.")
+        logging.error(f"Checking account {CHECKING_PHONE_NUMBER} not found. Exiting.")
+        return
+
+    await checking_client.start()
+    
+    # Register event handlers for each channel once
+    for channel_link, data in channel_data.items():
+        try:
+            entity = await checking_client.get_entity(channel_link)
+            
+            # Use a lambda function to pass the channel_link to the handler
+            checking_client.add_event_handler(
+                lambda event: handle_new_post(event, bot, channel_link),
+                events.NewMessage(chats=entity, incoming=True)
+            )
+            
+            reporting_tasks[channel_link] = "Running"
+        except Exception as e:
+            logging.error(f"Failed to start reporting for channel {channel_link}: {e}")
+            
+    await asyncio.gather(*[client.start() for client in other_clients], return_exceptions=True)
+    logging.info(f"Started monitoring {len(channel_data)} channels with the dedicated account.")
 
 def main() -> None:
     init_files()
     application = Application.builder().token(BOT_TOKEN).post_init(initialize_all_clients).build()
     
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("backup", backup_command))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
