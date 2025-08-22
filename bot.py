@@ -1,24 +1,20 @@
 import os
 import asyncio
 import re
-import zipfile
-import io
 import json
+import logging
 from datetime import datetime, timedelta
 from telethon import TelegramClient, events
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from telethon.tl.functions.messages import ReportRequest, ReportSpamRequest, ImportChatInviteRequest
+from telethon.tl.functions.messages import ReportRequest, ReportSpamRequest
 from telethon.tl.types import (
-    InputPeerChannel, Channel,
     InputReportReasonSpam, InputReportReasonViolence, InputReportReasonChildAbuse,
     InputReportReasonIllegalDrugs, InputReportReasonPornography, InputReportReasonPersonalDetails,
     InputReportReasonCopyright, InputReportReasonFake, InputReportReasonOther
 )
-from telethon.errors import RPCError, FloodWaitError, UserAlreadyParticipantError, ChannelPrivateError
+from telethon.errors import FloodWaitError, ChannelPrivateError
 import traceback
-import logging
-import random
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -33,7 +29,6 @@ BOT_TOKEN = '8324191756:AAF28XJJ9wSO2jZ5iFIqlrdEbjqHFX190Pk'
 
 SESSION_FOLDER = 'sessions'
 CHANNEL_DATA_FILE = 'channel_data.json'
-GRANTED_USERS_FILE = 'granted_users.json'
 
 # --- SPECIFIC ACCOUNT FOR CHECKING ---
 CHECKING_PHONE_NUMBER = "+923117822922"
@@ -82,11 +77,6 @@ REPORT_SUBTYPES = {
     }
 }
 
-session_locks = {}
-user_tasks = {}
-task_counter = 0
-
-# Telethon client for each session
 telethon_clients = {}
 reporting_tasks = {}
 
@@ -94,21 +84,9 @@ reporting_tasks = {}
 def init_files():
     if not os.path.exists(SESSION_FOLDER):
         os.makedirs(SESSION_FOLDER)
-    if not os.path.exists(GRANTED_USERS_FILE):
-        with open(GRANTED_USERS_FILE, 'w') as f:
-            json.dump([], f)
     if not os.path.exists(CHANNEL_DATA_FILE):
         with open(CHANNEL_DATA_FILE, 'w') as f:
             json.dump({}, f)
-
-def load_granted_users():
-    if not os.path.exists(GRANTED_USERS_FILE):
-        return []
-    with open(GRANTED_USERS_FILE, 'r') as f:
-        try:
-            return json.load(f)
-        except json.JSONDecodeError:
-            return []
 
 def load_channel_data():
     if not os.path.exists(CHANNEL_DATA_FILE):
@@ -131,23 +109,15 @@ def mask_phone_number(phone_number):
         return phone_number
     return phone_number[:5] + '***' + phone_number[-5:]
 
-def get_logged_in_accounts(user_id, all_access=False):
+def get_logged_in_accounts():
     accounts = []
-    if all_access:
-        for user_folder in os.listdir(SESSION_FOLDER):
-            user_path = os.path.join(SESSION_FOLDER, user_folder)
-            if os.path.isdir(user_path) and user_folder.isdigit():
-                for filename in os.listdir(user_path):
-                    if filename.endswith('.session'):
-                        phone_number = os.path.splitext(filename)[0]
-                        accounts.append((phone_number, int(user_folder)))
-    else:
-        user_path = os.path.join(SESSION_FOLDER, str(user_id))
-        if os.path.exists(user_path):
+    for user_folder in os.listdir(SESSION_FOLDER):
+        user_path = os.path.join(SESSION_FOLDER, user_folder)
+        if os.path.isdir(user_path) and user_folder.isdigit():
             for filename in os.listdir(user_path):
                 if filename.endswith('.session'):
                     phone_number = os.path.splitext(filename)[0]
-                    accounts.append((phone_number, user_id))
+                    accounts.append((phone_number, int(user_folder)))
     return accounts
 
 # --- BOT HANDLERS (TELEGRAM.EXT) ---
@@ -342,7 +312,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def manage_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = update.effective_user.id
-    accounts = get_logged_in_accounts(user_id, True)
+    accounts = get_logged_in_accounts()
 
     if not accounts:
         await query.edit_message_text("No accounts are currently logged in.")
@@ -363,7 +333,7 @@ async def manage_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE, phone_number: str, account_user_id: str):
     query = update.callback_query
-    session_file_path = os.path.join(SESSION_FOLDER, account_user_id, f'{phone_number}.session')
+    session_file_path = os.path.join(SESSION_FOLDER, str(account_user_id), f'{phone_number}.session')
     
     try:
         if os.path.exists(session_file_path):
@@ -446,17 +416,14 @@ async def delete_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
 async def start_all_reporting_tasks(bot):
     global telethon_clients, reporting_tasks
     
-    # First, disconnect all existing clients and cancel tasks
     for client in telethon_clients.values():
         if client.is_connected():
             await client.disconnect()
-    for task in reporting_tasks.values():
-        task.cancel()
     
     telethon_clients = {}
     reporting_tasks = {}
 
-    accounts = get_logged_in_accounts(OWNER_ID, all_access=True)
+    accounts = get_logged_in_accounts()
     channel_data = load_channel_data()
 
     if not accounts or not channel_data:
@@ -552,7 +519,7 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
     try:
         entity = await client.get_entity(channel_link)
         
-        for i in range(report_count):
+        for _ in range(report_count):
             await client(ReportRequest(
                 peer=entity, 
                 id=[message_id], 
@@ -570,22 +537,20 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
         logging.error(f"Error for account {phone_number}: {traceback.format_exc()}")
         
 async def initialize_all_clients(bot):
-    global telethon_clients, reporting_tasks
+    global telethon_clients
     
-    # Disconnect existing clients
-    for client in telethon_clients.values():
+    for client in list(telethon_clients.values()):
         if client.is_connected():
             await client.disconnect()
     
-    telethon_clients = {}
+    telethon_clients.clear()
     
-    accounts = get_logged_in_accounts(OWNER_ID, all_access=True)
+    accounts = get_logged_in_accounts()
     for phone_number, user_id in accounts:
         session_path = os.path.join(SESSION_FOLDER, str(user_id), phone_number)
         client = TelegramClient(session_path, API_ID, API_HASH)
         telethon_clients[phone_number] = client
     
-    # Re-start all reporting tasks
     await start_all_reporting_tasks(bot)
 
 def main() -> None:
@@ -597,9 +562,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
-    # Start the event listeners as soon as the bot is running
-    application.post_init(lambda app: asyncio.create_task(initialize_all_clients(app.bot)))
-    application.run_polling(drop_pending_updates=True)
+    application.run_polling(drop_pending_updates=True, post_init=lambda app: asyncio.create_task(initialize_all_clients(app.bot)))
 
 if __name__ == '__main__':
     main()
