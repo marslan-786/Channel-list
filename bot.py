@@ -7,7 +7,7 @@ import zipfile
 import io
 from datetime import datetime
 from telethon import TelegramClient, events
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, constants
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from telethon.tl.functions.messages import ReportRequest
 from telethon.tl.types import (
@@ -465,10 +465,14 @@ async def handle_new_post(event, bot, channel_link):
     report_message = data['report_message']
     report_count = data['report_count']
 
-    await bot.send_message(OWNER_ID, f"**ایک نئی پوسٹ آ گئی ہے!** 📢\n"
-                                     f"**چینل:** {channel_link}\n"
-                                     f"**رپورٹ کی قسم:** {report_type}\n"
-                                     f"آٹومیٹک رپورٹنگ شروع ہو گئی ہے۔..", parse_mode='Markdown')
+    await bot.send_message(
+        chat_id=OWNER_ID, 
+        text=f"**ایک نئی پوسٹ آ گئی ہے!** 📢\n"
+             f"**چینل:** {channel_link}\n"
+             f"**رپورٹ کی قسم:** {report_type}\n"
+             f"آٹومیٹک رپورٹنگ شروع ہو گئی ہے۔..",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
 
     await report_message_from_all_accounts(bot, channel_link, event.id, report_type, report_message, report_count)
     
@@ -476,10 +480,14 @@ async def handle_new_post(event, bot, channel_link):
     data['total_reports_sent'] += report_count
     save_channel_data(channel_data)
     
-    await bot.send_message(OWNER_ID, f"✅ **رپورٹنگ مکمل!**\n"
-                                     f"**چینل:** {channel_link}\n"
-                                     f"**پوسٹ ID:** `{event.id}`\n"
-                                     f"**کل رپورٹس بھیجی گئیں:** {report_count * (len(telethon_clients.keys()) - 1)}")
+    await bot.send_message(
+        chat_id=OWNER_ID, 
+        text=f"✅ **رپورٹنگ مکمل!**\n"
+             f"**چینل:** {channel_link}\n"
+             f"**پوسٹ ID:** `{event.id}`\n"
+             f"**کل رپورٹس بھیجی گئیں:** {report_count * (len(telethon_clients.keys()) - 1)}",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
 
 async def report_message_from_all_accounts(bot, channel_link, message_id, report_type, report_message, report_count):
     accounts_to_use = [phone for phone in telethon_clients.keys() if phone != CHECKING_PHONE_NUMBER]
@@ -494,7 +502,10 @@ async def report_message_from_all_accounts(bot, channel_link, message_id, report
                 break
     
     if report_reason_obj is None:
-        await bot.send_message(OWNER_ID, f"❌ Invalid report type for auto-reporting: {report_type}")
+        await bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"❌ Invalid report type for auto-reporting: {report_type}"
+        )
         return
 
     tasks = []
@@ -524,10 +535,16 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
         
         logging.info(f"✅ Reports sent successfully from {phone_number} for post {message_id} in {channel_link}.")
     except FloodWaitError as e:
-        await bot.send_message(OWNER_ID, f"❌ FloodWaitError for account {mask_phone_number(phone_number)}: {e.seconds} seconds. Skipping this post.")
+        await bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"❌ FloodWaitError for account {mask_phone_number(phone_number)}: {e.seconds} seconds. Skipping this post."
+        )
         logging.warning(f"FloodWaitError for {phone_number}: {e.seconds}s")
     except Exception as e:
-        await bot.send_message(OWNER_ID, f"❌ Report failed from {mask_phone_number(phone_number)} for post {message_id} in {channel_link}. Reason: {e}")
+        await bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"❌ Report failed from {mask_phone_number(phone_number)} for post {message_id} in {channel_link}. Reason: {e}"
+        )
         logging.error(f"Error for account {phone_number}: {traceback.format_exc()}")
         
 async def initialize_all_clients(app):
@@ -554,7 +571,10 @@ async def initialize_all_clients(app):
             checking_client = client
     
     if not checking_client:
-        await bot.send_message(OWNER_ID, f"❌ Warning: The checking account {CHECKING_PHONE_NUMBER} is not logged in. Automatic reporting will not start.")
+        await bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"❌ Warning: The checking account {CHECKING_PHONE_NUMBER} is not logged in. Automatic reporting will not start."
+        )
         logging.error(f"Checking account {CHECKING_PHONE_NUMBER} not found. Exiting.")
         return
 
