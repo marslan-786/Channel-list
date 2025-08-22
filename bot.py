@@ -38,7 +38,7 @@ CHECKING_PHONE_NUMBER = "+923117822922"
 # --- MAPPING HUMAN-READABLE STRINGS TO TELEGRAM'S InputReportReason TYPES ---
 REPORT_REASONS = {
     'Scam or spam': InputReportReasonSpam(),
-    'Violence': InputReasonViolence(),
+    'Violence': InputReportReasonViolence(),
     'Child abuse': InputReportReasonChildAbuse(),
     'Illegal goods': InputReportReasonIllegalDrugs(),
     'Illegal adult content': InputReportReasonPornography(),
