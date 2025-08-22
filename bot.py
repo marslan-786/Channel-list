@@ -308,7 +308,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 'report_count': report_count,
                 'total_posts_reported': 0,
                 'total_reports_sent': 0,
-                'last_updated': datetime.now().isoformat()
+                'last_updated': datetime.now().isoformat(),
+                'added_by_user_id': user_id  # <--- HERE'S THE CHANGE
             }
             save_channel_data(channel_data)
             
@@ -464,9 +465,10 @@ async def handle_new_post(event, bot, channel_link):
     report_type = data['report_type']
     report_message = data['report_message']
     report_count = data['report_count']
+    added_by_user_id = data['added_by_user_id'] # Get the user ID who added the channel
 
     await bot.send_message(
-        chat_id=OWNER_ID, 
+        chat_id=added_by_user_id, # Use the stored user ID
         text=f"**ایک نئی پوسٹ آ گئی ہے!** 📢\n"
              f"**چینل:** {channel_link}\n"
              f"**رپورٹ کی قسم:** {report_type}\n"
@@ -481,7 +483,7 @@ async def handle_new_post(event, bot, channel_link):
     save_channel_data(channel_data)
     
     await bot.send_message(
-        chat_id=OWNER_ID, 
+        chat_id=added_by_user_id, # Use the stored user ID
         text=f"✅ **رپورٹنگ مکمل!**\n"
              f"**چینل:** {channel_link}\n"
              f"**پوسٹ ID:** `{event.id}`\n"
