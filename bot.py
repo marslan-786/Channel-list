@@ -3,7 +3,7 @@ import asyncio
 import re
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from telethon import TelegramClient, events
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -416,12 +416,12 @@ async def delete_channel(update: Update, context: ContextTypes.DEFAULT_TYPE, cha
 async def start_all_reporting_tasks(bot):
     global telethon_clients, reporting_tasks
     
-    for client in telethon_clients.values():
+    for client in list(telethon_clients.values()):
         if client.is_connected():
             await client.disconnect()
     
-    telethon_clients = {}
-    reporting_tasks = {}
+    telethon_clients.clear()
+    reporting_tasks.clear()
 
     accounts = get_logged_in_accounts()
     channel_data = load_channel_data()
@@ -536,7 +536,8 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
         await bot.send_message(OWNER_ID, f"❌ Report failed from {mask_phone_number(phone_number)} for post {message_id} in {channel_link}. Reason: {e}")
         logging.error(f"Error for account {phone_number}: {traceback.format_exc()}")
         
-async def initialize_all_clients(bot):
+async def initialize_all_clients(app):
+    bot = app.bot
     global telethon_clients
     
     for client in list(telethon_clients.values()):
@@ -554,15 +555,14 @@ async def initialize_all_clients(bot):
     await start_all_reporting_tasks(bot)
 
 def main() -> None:
-    global application
     init_files()
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).post_init(initialize_all_clients).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
-    application.run_polling(drop_pending_updates=True, post_init=lambda app: asyncio.create_task(initialize_all_clients(app.bot)))
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
