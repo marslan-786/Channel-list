@@ -38,7 +38,7 @@ CHECKING_PHONE_NUMBER = "+923117822922"
 # --- MAPPING HUMAN-READABLE STRINGS TO TELEGRAM'S InputReportReason TYPES ---
 REPORT_REASONS = {
     'Scam or spam': InputReportReasonSpam(),
-    'Violence': InputReportReasonViolence(),
+    'Violence': InputReasonViolence(),
     'Child abuse': InputReportReasonChildAbuse(),
     'Illegal goods': InputReportReasonIllegalDrugs(),
     'Illegal adult content': InputReportReasonPornography(),
@@ -126,7 +126,10 @@ def get_logged_in_accounts():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if not is_owner(user_id):
-        await update.message.reply_text("You are not authorized to use this bot.")
+        if update.message:
+            await update.message.reply_text("You are not authorized to use this bot.")
+        elif update.callback_query:
+            await update.callback_query.edit_message_text("You are not authorized to use this bot.")
         return
 
     text = 'Hello Owner! Please choose an option:'
@@ -136,12 +139,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("Channel List 📢", callback_data='channel_list')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup)
+
+    if update.message:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
+
+    if not is_owner(user_id):
+        await query.edit_message_text("You are not authorized to use this bot.")
+        return
     
     if query.data == 'login_start':
         await query.edit_message_text(text="Please send your phone number with country code (e.g., +923001234567) to log in.")
@@ -468,7 +479,7 @@ async def handle_new_post(event, bot, channel_link):
     await bot.send_message(OWNER_ID, f"✅ **رپورٹنگ مکمل!**\n"
                                      f"**چینل:** {channel_link}\n"
                                      f"**پوسٹ ID:** `{event.id}`\n"
-                                     f"**کل رپورٹس بھیجی گئیں:** {report_count * len(telethon_clients.keys()) - 1}")
+                                     f"**کل رپورٹس بھیجی گئیں:** {report_count * (len(telethon_clients.keys()) - 1)}")
 
 async def report_message_from_all_accounts(bot, channel_link, message_id, report_type, report_message, report_count):
     accounts_to_use = [phone for phone in telethon_clients.keys() if phone != CHECKING_PHONE_NUMBER]
@@ -501,13 +512,14 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
     try:
         entity = await client.get_entity(channel_link)
         
-        for _ in range(report_count):
+        for i in range(report_count):
             await client(ReportRequest(
                 peer=entity, 
                 id=[message_id], 
                 reason=report_reason_obj, 
                 message=report_message
             ))
+            logging.info(f"Report {i+1}/{report_count} sent from {phone_number} for post {message_id} in {channel_link}.")
             await asyncio.sleep(2)
         
         logging.info(f"✅ Reports sent successfully from {phone_number} for post {message_id} in {channel_link}.")
@@ -520,7 +532,7 @@ async def send_single_report_task(bot, phone_number, channel_link, message_id, r
         
 async def initialize_all_clients(app):
     bot = app.bot
-    global telethon_clients, reporting_tasks
+    global telethon_clients
     
     for client in list(telethon_clients.values()):
         if client.is_connected():
@@ -532,6 +544,8 @@ async def initialize_all_clients(app):
     telethon_clients.clear()
     
     accounts = get_logged_in_accounts()
+    checking_client = None
+    
     for phone_number, user_id in accounts:
         session_path = os.path.join(SESSION_FOLDER, str(user_id), phone_number)
         client = TelegramClient(session_path, API_ID, API_HASH)
@@ -554,10 +568,11 @@ async def initialize_all_clients(app):
         try:
             entity = await checking_client.get_entity(channel_link)
             
-            @checking_client.on(events.NewMessage(chats=entity, incoming=True))
-            async def handler(event):
-                if event.post and not event.is_private:
-                    await handle_new_post(event, bot, channel_link)
+            # Use a partial to pass the arguments correctly to the handler
+            checking_client.add_event_handler(
+                lambda event, cl=channel_link: handle_new_post(event, bot, cl),
+                events.NewMessage(chats=entity, incoming=True)
+            )
             
         except Exception as e:
             logging.error(f"Failed to add event handler for channel {channel_link}: {e}")
