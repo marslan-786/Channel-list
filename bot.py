@@ -321,14 +321,12 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Add sessions folder
             for root, dirs, files in os.walk(SESSION_FOLDER):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, os.path.dirname(SESSION_FOLDER))
                     zip_file.write(file_path, arcname)
 
-            # Add channel_data.json file
             if os.path.exists(CHANNEL_DATA_FILE):
                 zip_file.write(CHANNEL_DATA_FILE, os.path.basename(CHANNEL_DATA_FILE))
 
@@ -375,7 +373,7 @@ async def delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE, pho
                 os.remove(journal_file_path)
             
             await query.edit_message_text(f"✅ Session file for {mask_phone_number(phone_number)} has been deleted.")
-            await initialize_all_clients(context.bot) # Re-initialize clients after deletion
+            await initialize_all_clients(context.bot)
         else:
             await query.edit_message_text(f"❌ Session file for {mask_phone_number(phone_number)} not found.")
     except Exception as e:
@@ -466,6 +464,11 @@ async def handle_new_post(event, bot, channel_link):
     data['total_posts_reported'] += 1
     data['total_reports_sent'] += report_count
     save_channel_data(channel_data)
+    
+    await bot.send_message(OWNER_ID, f"✅ **رپورٹنگ مکمل!**\n"
+                                     f"**چینل:** {channel_link}\n"
+                                     f"**پوسٹ ID:** `{event.id}`\n"
+                                     f"**کل رپورٹس بھیجی گئیں:** {report_count * len(telethon_clients.keys()) - 1}")
 
 async def report_message_from_all_accounts(bot, channel_link, message_id, report_type, report_message, report_count):
     accounts_to_use = [phone for phone in telethon_clients.keys() if phone != CHECKING_PHONE_NUMBER]
@@ -519,57 +522,49 @@ async def initialize_all_clients(app):
     bot = app.bot
     global telethon_clients, reporting_tasks
     
-    # Disconnect existing clients and clear tasks
     for client in list(telethon_clients.values()):
         if client.is_connected():
-            await client.disconnect()
+            try:
+                await client.disconnect()
+            except Exception as e:
+                logging.error(f"Failed to disconnect client: {e}")
     
     telethon_clients.clear()
-    reporting_tasks.clear()
-
+    
     accounts = get_logged_in_accounts()
-    channel_data = load_channel_data()
-
-    if not accounts or not channel_data:
-        logging.info("No accounts or channels found. Automatic reporting not started.")
-        return
-
-    checking_client = None
-    other_clients = []
-
     for phone_number, user_id in accounts:
         session_path = os.path.join(SESSION_FOLDER, str(user_id), phone_number)
         client = TelegramClient(session_path, API_ID, API_HASH)
         telethon_clients[phone_number] = client
         if phone_number == CHECKING_PHONE_NUMBER:
             checking_client = client
-        else:
-            other_clients.append(client)
     
     if not checking_client:
         await bot.send_message(OWNER_ID, f"❌ Warning: The checking account {CHECKING_PHONE_NUMBER} is not logged in. Automatic reporting will not start.")
         logging.error(f"Checking account {CHECKING_PHONE_NUMBER} not found. Exiting.")
         return
 
-    await checking_client.start()
+    try:
+        await checking_client.start()
+    except Exception as e:
+        logging.error(f"Failed to start checking client: {e}")
+        return
     
-    # Register event handlers for each channel once
-    for channel_link, data in channel_data.items():
+    for channel_link in load_channel_data().keys():
         try:
             entity = await checking_client.get_entity(channel_link)
             
-            # Use a lambda function to pass the channel_link to the handler
-            checking_client.add_event_handler(
-                lambda event: handle_new_post(event, bot, channel_link),
-                events.NewMessage(chats=entity, incoming=True)
-            )
+            @checking_client.on(events.NewMessage(chats=entity, incoming=True))
+            async def handler(event):
+                if event.post and not event.is_private:
+                    await handle_new_post(event, bot, channel_link)
             
-            reporting_tasks[channel_link] = "Running"
         except Exception as e:
-            logging.error(f"Failed to start reporting for channel {channel_link}: {e}")
+            logging.error(f"Failed to add event handler for channel {channel_link}: {e}")
             
+    other_clients = [client for phone, client in telethon_clients.items() if phone != CHECKING_PHONE_NUMBER]
     await asyncio.gather(*[client.start() for client in other_clients], return_exceptions=True)
-    logging.info(f"Started monitoring {len(channel_data)} channels with the dedicated account.")
+    logging.info(f"Started monitoring {len(load_channel_data())} channels with the dedicated account.")
 
 def main() -> None:
     init_files()
